@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "hermes": [
+    "0.21.5"
+  ],
+  "mobile": {
+    "version": "0.0.0",
+    "channels": {
+      "androidApk": {
+        "version": "0.0.0",
+        "githubUrl": "",
+        "cloudflareUrl": "",
+        "online": false
+      },
+      "googlePlay": {
+        "version": "0.0.0",
+        "url": "",
+        "online": false
+      },
+      "apple": {
+        "version": "0.0.0",
+        "testFlightUrl": "",
+        "appStoreUrl": "",
+        "online": false
+      },
+      "harmony": {
+        "url": "",
+        "online": false
+      }
+    }
+  }
+}
