@@ -1,0 +1,86 @@
+name: Release Channel Mirror
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_tag:
+        description: "Existing AlphaTech Studio source release tag"
+        required: true
+        type: string
+      target_tag:
+        description: "Release tag in this channel (defaults to source_tag)"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-channel-mirror-${{ inputs.target_tag || inputs.source_tag }}
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    env:
+      SOURCE_REPOSITORY: JiaDing-AlphaTech/alphatech-studio
+      SOURCE_TAG: ${{ inputs.source_tag }}
+      TARGET_TAG: ${{ inputs.target_tag || inputs.source_tag }}
+      SOURCE_TOKEN: ${{ secrets.ALPHATECH_SOURCE_TOKEN }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Validate source credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$SOURCE_TOKEN" || {
+            echo "ALPHATECH_SOURCE_TOKEN is not configured" >&2
+            exit 1
+          }
+          GH_TOKEN="$SOURCE_TOKEN" gh repo view "$SOURCE_REPOSITORY" >/dev/null
+
+      - name: Download source release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          asset_dir="$RUNNER_TEMP/alphatech-release-assets"
+          mkdir -p "$asset_dir"
+          GH_TOKEN="$SOURCE_TOKEN" gh release download "$SOURCE_TAG" \
+            --repo "$SOURCE_REPOSITORY" \
+            --dir "$asset_dir"
+          test -n "$(find "$asset_dir" -maxdepth 1 -type f -print -quit)"
+          printf 'ASSET_DIR=%s\n' "$asset_dir" >> "$GITHUB_ENV"
+
+      - name: Create or update channel release
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$TARGET_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$TARGET_TAG" --repo "$GITHUB_REPOSITORY" \
+              --title "AlphaTech Studio $TARGET_TAG" --latest
+          else
+            gh release create "$TARGET_TAG" --repo "$GITHUB_REPOSITORY" \
+              --target main --title "AlphaTech Studio $TARGET_TAG" \
+              --notes "Official AlphaTech Studio desktop release mirrored from the signed source release."
+          fi
+
+      - name: Upload and verify channel assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          for asset in "$ASSET_DIR"/*; do
+            [ -f "$asset" ] || continue
+            gh release upload "$TARGET_TAG" "$asset" \
+              --repo "$GITHUB_REPOSITORY" --clobber
+          done
+
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TARGET_TAG" \
+            --jq '.assets[] | [.name, .size] | @tsv' > "$RUNNER_TEMP/channel-assets.tsv"
+          while IFS=$'\t' read -r name remote_size; do
+            local_size="$(stat -c '%s' "$ASSET_DIR/$name")"
+            test "$local_size" = "$remote_size" || {
+              echo "Size mismatch for $name: local=$local_size remote=$remote_size" >&2
+              exit 1
+            }
+          done < "$RUNNER_TEMP/channel-assets.tsv"
